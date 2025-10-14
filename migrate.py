@@ -88,6 +88,28 @@ def run_migration_workflow(wp_url, admin_user, admin_pass):
             # --- PHASE 1: LOGIN ---
             print("--- PHASE 1: LOGIN ---")
             page.goto(f"{wp_url}/wp-admin/", timeout=60000)
+            
+            # Check if WordPress needs installation
+            if "install.php" in page.url:
+                print("   -> WordPress installation required. Setting up WordPress...")
+                
+                # Fill WordPress installation form
+                page.fill("#weblog_title", "WordPress Migration Source")
+                page.fill("#user_name", admin_user)
+                page.fill("#pass1", admin_pass)
+                page.fill("#pass2", admin_pass)
+                page.fill("#admin_email", "admin@example.com")
+                
+                # Submit installation
+                page.click("#submit")
+                page.wait_for_selector("a:has-text('Log In')", timeout=60000)
+                print("   -> WordPress installation completed. Proceeding to login...")
+                
+                # Click login link
+                page.click("a:has-text('Log In')")
+                page.wait_for_selector("#user_login", timeout=30000)
+            
+            # Now perform regular login
             page.fill("#user_login", admin_user)
             page.fill("#user_pass", admin_pass)
             page.click("#wp-submit")

@@ -71,14 +71,14 @@ deploy_file() {
         -e "s/{{ DB_USER }}/$DB_USER/g" \
         -e "s/{{ WP_DB_PASS }}/$WP_DB_PASS/g" \
         -e "s/{{ ROOT_PASS }}/$ROOT_PASS/g" \
-        "$TEMPLATE_DIR/$FILE" | kubectl apply -f -
+        "$TEMPLATE_DIR/$FILE" | sudo kubectl apply -f -
 }
 
 # --- 4. EXECUTION ---
 
 # Create the Namespace (The "|| true" prevents the script from stopping if the namespace already exists)
 echo "Creating Namespace '$CLIENT_NAMESPACE'..."
-kubectl create namespace "$CLIENT_NAMESPACE" || true
+sudo kubectl create namespace "$CLIENT_NAMESPACE" || true
 
 # Loop through the list of files and deploy each one
 for FILE in "${YAML_FILES[@]}"; do

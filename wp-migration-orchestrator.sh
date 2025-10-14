@@ -16,7 +16,7 @@ NC='\033[0m' # No Color
 
 # Configuration
 MIGRATE_SCRIPT="migrate.py"
-DEPLOY_SCRIPT="deploy-client.sh"
+DEPLOY_SCRIPT="/home/ubuntu/k3s-abhi.sh"
 IMPORT_SCRIPT="import.py"
 TEMP_DIR="/tmp/wp_migration_$$"
 
@@ -124,7 +124,7 @@ increase_upload_limits() {
     print_info "Increasing WordPress upload limits..."
     
     # Get WordPress pod name
-    pod_name=$(kubectl get pods -n "$namespace" -l app=wordpress -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+    pod_name=$(sudo kubectl get pods -n "$namespace" -l app=wordpress -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
     
     if [ -z "$pod_name" ]; then
         print_error "Could not find WordPress pod in namespace $namespace"
@@ -142,8 +142,8 @@ php_value max_input_time 300
 EOF
 
     # Backup original .htaccess if it exists and copy new one
-    kubectl exec -n "$namespace" "$pod_name" -- sh -c 'cp /var/www/html/.htaccess /var/www/html/.htaccess.backup 2>/dev/null || true'
-    kubectl cp "${TEMP_DIR}/htaccess_high_limits" "$namespace/$pod_name:/var/www/html/.htaccess"
+    sudo kubectl exec -n "$namespace" "$pod_name" -- sh -c 'cp /var/www/html/.htaccess /var/www/html/.htaccess.backup 2>/dev/null || true'
+    sudo kubectl cp "${TEMP_DIR}/htaccess_high_limits" "$namespace/$pod_name:/var/www/html/.htaccess"
     
     print_success "Upload limits increased to 512M"
 }
@@ -156,7 +156,7 @@ restore_upload_limits() {
     print_info "Restoring original upload limits..."
     
     # Get WordPress pod name
-    pod_name=$(kubectl get pods -n "$namespace" -l app=wordpress -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+    pod_name=$(sudo kubectl get pods -n "$namespace" -l app=wordpress -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
     
     if [ -z "$pod_name" ]; then
         print_warning "Could not find WordPress pod in namespace $namespace"
@@ -164,7 +164,7 @@ restore_upload_limits() {
     fi
     
     # Restore backup or create default .htaccess
-    kubectl exec -n "$namespace" "$pod_name" -- sh -c '
+    sudo kubectl exec -n "$namespace" "$pod_name" -- sh -c '
         if [ -f /var/www/html/.htaccess.backup ]; then
             mv /var/www/html/.htaccess.backup /var/www/html/.htaccess
         else
@@ -238,12 +238,28 @@ main() {
     print_info "3. Import the backup to the new instance"
     echo
     
-    # --- PHASE 1: COLLECT SOURCE SITE INFORMATION ---
-    print_header "PHASE 1: SOURCE SITE BACKUP"
+    # --- COLLECT ALL INFORMATION FIRST ---
+    print_header "MIGRATION CONFIGURATION"
     
+    print_info "Source Site Information:"
     get_input "Enter source WordPress URL (e.g., https://old-site.com): " SOURCE_WP_URL
     get_input "Enter source WordPress admin username: " SOURCE_USERNAME
     get_input "Enter source WordPress admin password: " SOURCE_PASSWORD true
+    
+    echo
+    print_info "Target Site Information:"
+    get_input "Enter new domain for migrated site (e.g., wp2.test.kunj.company): " NEW_DOMAIN
+    get_input "Enter Kubernetes namespace for new site: " CLIENT_NAMESPACE
+    get_input "Enter WordPress admin email: " ADMIN_EMAIL
+    
+    # Construct target URL from domain (assuming HTTP)
+    TARGET_WP_URL="http://$NEW_DOMAIN"
+    
+    # For k3s deployment, we'll get the generated credentials
+    print_info "New WordPress will be deployed with auto-generated credentials..."
+    
+    # --- PHASE 1: SOURCE SITE BACKUP ---
+    print_header "PHASE 1: SOURCE SITE BACKUP"
     
     print_info "Updating migrate.py configuration..."
     update_migrate_config "$SOURCE_WP_URL" "$SOURCE_USERNAME" "$SOURCE_PASSWORD"
@@ -259,34 +275,69 @@ main() {
     # --- PHASE 2: DEPLOY NEW WORDPRESS INSTANCE ---
     print_header "PHASE 2: DEPLOY NEW WORDPRESS INSTANCE"
     
-    print_info "Now we'll deploy a new WordPress instance on Kubernetes."
+    print_info "Deploying new WordPress instance with domain: $NEW_DOMAIN and namespace: $CLIENT_NAMESPACE"
     
-    # Run the deployment script interactively
-    if bash "$DEPLOY_SCRIPT"; then
+    # Run the k3s deployment script with our parameters
+    if "$DEPLOY_SCRIPT" "$NEW_DOMAIN" "$CLIENT_NAMESPACE"; then
         print_success "WordPress deployment completed successfully!"
     else
         print_error "WordPress deployment failed. Please check the logs above."
         exit 1
     fi
     
-    # --- PHASE 3: COLLECT TARGET SITE INFORMATION ---
-    print_header "PHASE 3: TARGET SITE CONFIGURATION"
+    # --- PHASE 3: SETUP WORDPRESS ADMIN ---
+    print_header "PHASE 3: SETTING UP WORDPRESS ADMIN"
     
-    get_input "Enter the client namespace that was just created: " CLIENT_NAMESPACE
-    get_input "Enter target WordPress URL (e.g., https://new-site.com): " TARGET_WP_URL
-    get_input "Enter target WordPress admin username (default fresh install): " TARGET_USERNAME
-    get_input "Enter target WordPress admin password (default fresh install): " TARGET_PASSWORD true
+    # Get generated admin password from credentials file
+    CREDENTIALS_FILE="/home/ubuntu/k3s-wordpress-${NEW_DOMAIN//\./-}/credentials.txt"
+    if [ -f "$CREDENTIALS_FILE" ]; then
+        GENERATED_PASSWORD=$(grep "WordPress Admin Password:" "$CREDENTIALS_FILE" | cut -d: -f2 | xargs)
+        print_info "Found generated password in credentials file"
+    else
+        print_warning "Could not find credentials file, generating new password"
+        GENERATED_PASSWORD=$(openssl rand -base64 16 | tr -d "=+/" | cut -c1-16)
+    fi
     
-    # Wait for WordPress to be ready
-    wait_for_wordpress "$TARGET_WP_URL"
+    # Setup WordPress admin using the setup script
+    print_info "Configuring WordPress admin user..."
+    if /home/ubuntu/wp_migration_tool/setup-wordpress-admin.sh -n "$CLIENT_NAMESPACE" -d "$NEW_DOMAIN" -p "$GENERATED_PASSWORD" -e "$ADMIN_EMAIL"; then
+        print_success "WordPress admin setup completed successfully!"
+        TARGET_USERNAME="admin"
+        TARGET_PASSWORD="$GENERATED_PASSWORD"
+    else
+        print_error "WordPress admin setup failed. Continuing with manual credentials..."
+        TARGET_USERNAME="admin"
+        TARGET_PASSWORD="$GENERATED_PASSWORD"
+    fi
     
-    # --- PHASE 4: INCREASE UPLOAD LIMITS ---
-    print_header "PHASE 4: PREPARING FOR IMPORT"
+    # --- PHASE 4: EXTRACTING DEPLOYMENT CREDENTIALS ---
+    print_header "PHASE 4: EXTRACTING DEPLOYMENT CREDENTIALS"
+    
+    # Get credentials from the generated file
+    CREDENTIALS_FILE="/home/ubuntu/k3s-wordpress-${NEW_DOMAIN//\./-}/credentials.txt"
+    if [ -f "$CREDENTIALS_FILE" ]; then
+        TARGET_USERNAME="admin"  # WordPress default for fresh install
+        TARGET_PASSWORD=$(grep "WordPress Admin Password:" "$CREDENTIALS_FILE" | cut -d: -f2 | xargs)
+        print_success "Found generated credentials"
+        print_info "Target Username: $TARGET_USERNAME"
+        print_info "Target Password: $TARGET_PASSWORD"
+    else
+        print_warning "Could not find credentials file, using defaults"
+        TARGET_USERNAME="admin"
+        TARGET_PASSWORD="admin"
+    fi
+    
+    # Wait for WordPress to be ready (check locally since we need host header)
+    print_info "Waiting for WordPress to be accessible..."
+    sleep 30  # Give deployment time to stabilize
+    
+    # --- PHASE 5: INCREASE UPLOAD LIMITS ---
+    print_header "PHASE 5: PREPARING FOR IMPORT"
     
     increase_upload_limits "$CLIENT_NAMESPACE"
     
-    # --- PHASE 5: IMPORT BACKUP ---
-    print_header "PHASE 5: IMPORTING BACKUP"
+    # --- PHASE 6: IMPORT BACKUP ---
+    print_header "PHASE 6: IMPORTING BACKUP"
     
     print_info "Updating import.py configuration..."
     update_import_config "$SOURCE_WP_URL" "$TARGET_WP_URL" "$TARGET_USERNAME" "$TARGET_PASSWORD" "$SOURCE_USERNAME" "$SOURCE_PASSWORD"
@@ -301,8 +352,8 @@ main() {
         exit 1
     fi
     
-    # --- PHASE 6: RESTORE UPLOAD LIMITS ---
-    print_header "PHASE 6: FINALIZING"
+    # --- PHASE 7: RESTORE UPLOAD LIMITS ---
+    print_header "PHASE 7: FINALIZING"
     
     restore_upload_limits "$CLIENT_NAMESPACE"
     
