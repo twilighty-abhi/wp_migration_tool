@@ -1,118 +1,197 @@
 # WordPress Migration Orchestrator
 
-A comprehensive shell script that automates the complete WordPress migration process by orchestrating three components:
+Complete automated WordPress migration workflow manager for K3s/Kubernetes environments. This orchestrator coordinates all migration components to provide a seamless end-to-end migration experience.
 
-1. **migrate.py** - Creates backup of source WordPress site
-2. **deploy-client.sh** - Deploys new WordPress instance on Kubernetes
-3. **import.py** - Imports backup with automatic upload limit management
+## 🎯 Overview
 
-## Features
+The orchestrator manages the complete WordPress migration pipeline with five integrated components:
 
-✅ **Interactive Workflow** - Guides you through each step with clear prompts  
-✅ **Automatic Upload Limit Management** - Temporarily increases limits to 512M for import, then restores to 2M  
-✅ **Robust Error Handling** - Validates files, waits for services, and provides detailed feedback  
-✅ **Clean Configuration** - Automatically updates script configurations without manual editing  
-✅ **Comprehensive Logging** - Color-coded output with clear success/error messages  
-✅ **Automatic Cleanup** - Removes temporary files on completion or failure  
+1. **migrate.py** - Source WordPress site backup with browser automation
+2. **k3s-wp-spawner.sh** - K3s WordPress deployment with persistent storage  
+3. **setup-wordpress-admin.sh** - Automated WordPress configuration and plugin setup
+4. **import.py** - Backup import with upload limit management
+5. **update-htaccess.sh** - PHP upload limit management for large files
 
-## Prerequisites
+## ✨ Key Features
 
-### Host Requirements
-- Linux/Unix environment (WSL on Windows)
-- Python 3 with playwright installed
-- kubectl configured for your Kubernetes cluster
-- Bash shell
-- curl (for service health checks)
+✅ **🔄 End-to-End Automation** - Complete migration in a single command  
+✅ **🎯 Interactive Configuration** - Guided setup with intelligent defaults  
+✅ **📤 Smart Upload Management** - Dynamic PHP limits (2M → 128M → 2M)  
+✅ **🔒 Secure by Default** - Auto-generated passwords and secure configurations  
+✅ **🛡️ Robust Error Handling** - Comprehensive validation and rollback capabilities  
+✅ **📊 Real-time Progress** - Color-coded output with detailed status updates  
+✅ **🧹 Automatic Cleanup** - Temporary file management and resource optimization  
+✅ **☸️ K3s Optimized** - Designed for low-resource Kubernetes environments  
 
-### Python Dependencies
+## 📋 Prerequisites
+
+### System Requirements
+- **OS**: Ubuntu 20.04+ or compatible Linux distribution
+- **RAM**: 2GB minimum, 4GB recommended
+- **Storage**: 20GB+ available space
+- **Network**: Internet connectivity for package downloads
+
+### Software Dependencies
 ```bash
-pip install playwright
-playwright install
+# Core requirements
+- Python 3.10+
+- K3s/Kubernetes with kubectl access
+- Bash shell environment
+- curl and wget utilities
+
+# Python packages (auto-installed)
+- playwright
+- beautifulsoup4  
+- requests
 ```
 
-### Kubernetes Requirements
-- K3s or Kubernetes cluster access
-- kubectl configured and tested
-- Sufficient cluster resources for WordPress deployment
+### Kubernetes Environment
+- **K3s cluster** with Traefik ingress controller
+- **kubectl** configured with cluster access
+- **Persistent volume** support (local-path provisioner)
+- **Network policies** allowing HTTP traffic
 
-## Directory Structure
+## 📁 Project Structure
 
-Ensure your project directory contains:
+Complete project layout with all migration components:
 ```
 wp_migration_tool/
-├── wp-migration-orchestrator.sh    # Main orchestrator script
-├── migrate.py                       # Source site backup script
-├── deploy-client.sh                 # Kubernetes deployment script
-├── import.py                        # Backup import script
-└── templates/                       # Kubernetes YAML templates
-    ├── mysql-service.yaml
-    ├── mysql-statefulset.yaml
-    ├── wordpress-deployment.yaml
-    ├── wordpress-limit-job.yaml
-    ├── wp-configmap.yaml
-    ├── wp-secret.yaml
-    └── wp-service.yaml
+├── 🎯 wp-migration-orchestrator.sh    # Main orchestration workflow
+├── 🔄 migrate.py                      # Source backup automation
+├── 📥 import.py                       # Target import automation  
+├── ☸️ k3s-wp-spawner.sh               # K3s deployment script
+├── 🔧 setup-wordpress-admin.sh        # WordPress admin setup
+├── 📤 update-htaccess.sh              # Upload limit management
+├── ✅ check-prerequisites.sh          # Environment validation
+├── 🧪 test-environment.sh             # System testing
+├── 📋 test-orchestrator.sh           # Orchestrator testing
+├── 🪟 run-migration.bat              # Windows wrapper
+├── 📂 templates/                      # Kubernetes manifests
+│   ├── wordpress-limit-job.yaml
+│   ├── wp-configmap.yaml
+│   ├── wp-secret.yaml
+│   └── wp-service.yaml
+├── 📄 README.md                      # Main project documentation
+├── 📄 ORCHESTRATOR_README.md         # This orchestrator guide
+├── 📄 PROJECT_SUMMARY.md             # Project overview
+└── 📄 SETUP_COMPLETE.md              # Setup completion guide
 ```
 
-## Usage
+## 🚀 Usage Guide
 
 ### Quick Start
 ```bash
-# Make script executable (Linux/Unix)
-chmod +x wp-migration-orchestrator.sh
+# 1. Validate environment
+./check-prerequisites.sh
 
-# Run the orchestrator
+# 2. Run complete migration
 ./wp-migration-orchestrator.sh
 ```
 
-### Windows (using WSL)
+### Advanced Usage
 ```bash
-# Switch to WSL
-wsl
+# Test orchestrator without running migration
+./test-orchestrator.sh
 
-# Navigate to your project directory
-cd /mnt/c/Users/abhir/OneDrive/Desktop/Projects/wp_migration_tool
+# Test individual environment components
+./test-environment.sh
 
-# Make executable and run
-chmod +x wp-migration-orchestrator.sh
-./wp-migration-orchestrator.sh
+# Manual component execution
+python3 migrate.py              # Backup only
+./k3s-wp-spawner.sh domain.com ns     # Deploy only  
+python3 import.py               # Import only
 ```
 
-## Interactive Workflow
+### Windows Environment
+```bash
+# Use the provided batch wrapper
+run-migration.bat
 
-The script will guide you through 6 phases:
+# Or run directly in WSL
+wsl ./wp-migration-orchestrator.sh
+```
 
-### Phase 1: Source Site Backup
-- Enter source WordPress URL
-- Provide admin credentials
-- Automated backup creation and storage
+## 📊 Interactive Workflow
 
-### Phase 2: Deploy New WordPress Instance
-- Interactive Kubernetes deployment
-- Configure client namespace, database, and credentials
-- Automated pod deployment and service creation
+The orchestrator manages a comprehensive 5-phase migration process:
 
-### Phase 3: Target Site Configuration
-- Specify target WordPress URL and credentials
-- Service readiness validation
+### 🔄 Phase 1: Source Site Backup
+- 📝 Interactive source WordPress URL and credential collection
+- 🔌 Automatic All-in-One WP Migration plugin installation/activation
+- 🤖 Headless browser automation for backup creation
+- 📁 Organized backup file storage with site-specific folders
 
-### Phase 4: Preparing for Import
-- Automatic upload limit increase (2M → 512M)
-- .htaccess backup and modification
+### ☸️ Phase 2: K3s WordPress Deployment  
+- 🎯 Interactive target domain and namespace configuration
+- 🗄️ MariaDB deployment with persistent storage (5Gi)
+- 🐘 WordPress deployment with optimized resource limits
+- 🌐 Traefik ingress configuration for HTTP access
+- 🔐 Auto-generated secure database and admin credentials
 
-### Phase 5: Importing Backup
-- Plugin installation and activation
-- Backup file upload and restoration
-- WordPress configuration import
+### 🔧 Phase 3: WordPress Admin Setup
+- 🛠️ Automated WordPress core installation and configuration
+- 👤 Admin user creation with secure credentials
+- 🔌 All-in-One WP Migration plugin installation via WP-CLI
+- 📁 File permission optimization for WordPress security
 
-### Phase 6: Finalization
-- Upload limit restoration (512M → 2M)
-- Cleanup and completion summary
+### 📤 Phase 4: Upload Limit Management & Import
+- ⚙️ Dynamic PHP upload limit adjustment (2M → 128M)
+- 🚀 Automated backup upload to target WordPress site
+- 🔄 Plugin-based import process with progress monitoring
+- ✅ Import completion verification and error handling
 
-## Example Session
+### 🔒 Phase 5: Security & Cleanup
+- 📉 Upload limit restoration to secure defaults (128M → 2M) 
+- 🧹 Temporary file cleanup and resource optimization
+- 📋 Deployment summary with access credentials
+- 🎯 Final verification and handoff information
+
+## 💻 Example Migration Session
 
 ```bash
 $ ./wp-migration-orchestrator.sh
+
+===========================================
+WordPress Migration Orchestrator  
+===========================================
+
+ℹ️  This script will:
+ℹ️  1. Backup your source WordPress site
+ℹ️  2. Deploy a new WordPress instance on K3s
+ℹ️  3. Import the backup to the new instance
+
+===========================================
+MIGRATION CONFIGURATION
+===========================================
+
+ℹ️  Source Site Information:
+Enter source WordPress URL: http://old-site.example.com
+Enter admin username: admin
+Enter admin password: [hidden]
+
+ℹ️  Target Site Information:
+Enter new domain: new-site.example.com  
+Enter Kubernetes namespace: my-wp-site
+Enter admin email: admin@example.com
+
+===========================================
+PHASE 1: SOURCE SITE BACKUP
+===========================================
+
+ℹ️  Starting backup process...
+✅ Login successful
+✅ Plugin installed and activated
+✅ Backup created: /home/ubuntu/backup-receiver/old_site_example_com/backup.wpress
+
+===========================================
+PHASE 2: K3S WORDPRESS DEPLOYMENT
+===========================================
+
+ℹ️  Deploying WordPress on K3s...
+✅ Namespace created: my-wp-site
+✅ MariaDB deployed and ready
+✅ WordPress deployed and ready
+✅ Ingress configured for new-site.example.com
 
 ===========================================
 WordPress Migration Orchestrator

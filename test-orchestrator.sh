@@ -8,7 +8,7 @@ echo "========================================"
 echo
 echo "This test will demonstrate the complete migration workflow:"
 echo "1. ✅ Source site backup (using migrate.py)"
-echo "2. ✅ New WordPress deployment (using k3s-abhi.sh)"  
+echo "2. ✅ New WordPress deployment (using k3s-wp-spawner.sh)"  
 echo "3. ✅ Backup import (using import.py)"
 echo
 echo "📋 Test Parameters:"
@@ -19,7 +19,7 @@ echo
 echo "🔧 Prerequisites Check:"
 
 # Check if all required files exist
-FILES=("migrate.py" "import.py" "k3s-abhi.sh")
+FILES=("migrate.py" "import.py" "k3s-wp-spawner.sh")
 for file in "${FILES[@]}"; do
     if [[ -f "$file" ]]; then
         echo "   ✅ $file found"

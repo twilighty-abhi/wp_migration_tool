@@ -16,7 +16,7 @@ NC='\033[0m' # No Color
 
 # Configuration
 MIGRATE_SCRIPT="migrate.py"
-DEPLOY_SCRIPT="./k3s-abhi.sh"
+DEPLOY_SCRIPT="./k3s-wp-spawner.sh"
 IMPORT_SCRIPT="import.py"
 TEMP_DIR="/tmp/wp_migration_$$"
 
