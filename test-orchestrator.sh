@@ -19,7 +19,7 @@ echo
 echo "🔧 Prerequisites Check:"
 
 # Check if all required files exist
-FILES=("migrate.py" "import.py" "/home/ubuntu/k3s-abhi.sh")
+FILES=("migrate.py" "import.py" "k3s-abhi.sh")
 for file in "${FILES[@]}"; do
     if [[ -f "$file" ]]; then
         echo "   ✅ $file found"
