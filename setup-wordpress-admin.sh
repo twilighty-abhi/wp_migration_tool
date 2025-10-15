@@ -112,4 +112,17 @@ else
     echo "⚠️  Plugin installation failed, but WordPress setup is complete"
 fi
 
+# Fix file permissions for WordPress and plugins
+echo "🔧 Fixing WordPress file permissions..."
+sudo kubectl exec -n "$NAMESPACE" "$POD_NAME" -- chown -R www-data:www-data /var/www/html/wp-content/
+sudo kubectl exec -n "$NAMESPACE" "$POD_NAME" -- chown www-data:www-data /var/www/html/.htaccess
+sudo kubectl exec -n "$NAMESPACE" "$POD_NAME" -- chmod -R 755 /var/www/html/wp-content/
+sudo kubectl exec -n "$NAMESPACE" "$POD_NAME" -- chmod 644 /var/www/html/.htaccess
+
+if [[ $? -eq 0 ]]; then
+    echo "✅ File permissions fixed successfully!"
+else
+    echo "⚠️  Permission fix failed, but WordPress setup is complete"
+fi
+
 echo "🎉 WordPress setup completed!"
