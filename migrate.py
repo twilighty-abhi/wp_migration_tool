@@ -1,14 +1,17 @@
-from playwright.sync_api import Playwright, sync_playwright
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 import time
 import os
 import re
+import requests
 
 # --- CONFIGURATION ---
-WP_URL = ""
-USERNAME = ""
-PASSWORD = ""
+WP_URL = "http://wp1.test.kunj.company"  # Ensure protocol included
+# USERNAME = "Tech4Good"
+# PASSWORD = "Tech4Good@"
+USERNAME = "abhiram"
+PASSWORD = "abhiram"
 PLUGIN_SLUG = "all-in-one-wp-migration"
-PLUGIN_NAME = "All-in-One WP Migration"
+PLUGIN_NAME = "All-In-One WP Migration"
 
 # --- BASE SAVE DIR ON EC2 INSTANCE ---
 BASE_EC2_DIR = "/home/ubuntu/backup-receiver/recieved_wp"
@@ -21,148 +24,194 @@ def get_safe_site_name(url):
     name = re.sub(r':\d+', '', name)
     return re.sub(r'[^\w\s-]', '_', name).strip().lower()
 
-def install_plugin_via_search(page):
-    """Navigates to Add New Plugin page and installs the plugin."""
-    print("   -> Plugin not found on installed list. Navigating to Add New.")
-    page.goto(f"{WP_URL}/wp-admin/plugin-install.php", wait_until="domcontentloaded")
-    
-    page.fill("#search-plugins", PLUGIN_NAME)
-    page.press("#search-plugins", "Enter")
-    
-    page.wait_for_selector(f'a.install-now[data-slug="{PLUGIN_SLUG}"]', timeout=15000)
-    install_selector = page.locator(f'a.install-now[data-slug="{PLUGIN_SLUG}"]')
-    
-    install_selector.click()
-    print("   -> Install clicked. Waiting for activation...")
+def perform_with_retries(action, description="", retries=5, delay=2):
+    for attempt in range(1, retries + 1):
+        try:
+            print(f"Attempt {attempt}/{retries} - {description}")
+            action()
+            print(f"{description} succeeded.")
+            return True
+        except PlaywrightTimeoutError as e:
+            print(f"{description} timeout on attempt {attempt}: {e}")
+        except Exception as e:
+            print(f"{description} failed on attempt {attempt}: {e}")
+        time.sleep(delay * (2 ** (attempt - 1)))  # exponential backoff on retries
+    print(f"All retries exhausted for: {description}")
+    return False
 
-    activate_selector_post_install = page.get_by_role("button", name="Activate")
-    activate_selector_post_install.wait_for(timeout=60000)
-    activate_selector_post_install.click()
-    print("   -> Plugin installed and activated successfully.")
-    return True
+def install_plugin_via_search(page):
+    print("   -> Plugin not found, navigating to Add New Plugins...")
+    page.goto(f"{WP_URL}/wp-admin/plugin-install.php", wait_until="domcontentloaded")
+
+    def search_and_click_install():
+        page.fill("#search-plugins", PLUGIN_NAME)
+        page.press("#search-plugins", "Enter")
+        page.wait_for_selector(f'a.install-now[data-slug="{PLUGIN_SLUG}"]', timeout=20000)
+        install_btn = page.locator(f'a.install-now[data-slug="{PLUGIN_SLUG}"]')
+        install_btn.click()
+        page.wait_for_load_state('networkidle', timeout=60000)  # Wait for install completion
+
+    if not perform_with_retries(search_and_click_install, "Plugin search and click install"):
+        raise Exception("Failed to click plugin install")
+
+    def click_activate():
+        activate_btn = page.locator(f'a.activate-now[data-slug="{PLUGIN_SLUG}"]')
+        activate_btn.click()
+        page.wait_for_load_state('networkidle', timeout=60000)  # Wait for activation
+
+    if not perform_with_retries(click_activate, "Activate plugin"):
+        raise Exception("Plugin activation failed")
 
 def ensure_plugin_active(page):
-    """Ensures the plugin is installed and active, handles all states safely."""
     plugin_row = page.locator(f'tr[data-slug="{PLUGIN_SLUG}"]')
-    plugin_row.wait_for(timeout=30000)
+
+    try:
+        plugin_row.wait_for(timeout=7000)
+    except PlaywrightTimeoutError:
+        print("   -> Plugin not installed. Installing now...")
+        install_plugin_via_search(page)
+        return True
 
     deactivate_link = plugin_row.locator("a:has-text('Deactivate')")
     if deactivate_link.is_visible():
-        print("   -> Plugin is already ACTIVE. Proceeding to export.")
+        print("   -> Plugin already active.")
         return True
 
     activate_link = plugin_row.locator("a:has-text('Activate')")
     if activate_link.is_visible():
-        print("   -> Plugin is inactive. Activating now...")
-        activate_link.click()
-        for attempt in range(3):
-            try:
-                deactivate_link.wait_for(state="visible", timeout=10000)
-                print("   -> Plugin activated successfully.")
-                return True
-            except:
-                print(f"   -> Waiting for plugin activation... attempt {attempt+1}")
-                time.sleep(2)
-        raise Exception("Plugin activation failed after retries.")
+        print("   -> Plugin inactive, activating...")
+        if perform_with_retries(activate_link.click, "Activate plugin"):
+            page.wait_for_load_state('networkidle')
+            return True
+        else:
+            print("Activation failed, reinstalling plugin.")
+            install_plugin_via_search(page)
+            return True
 
-    print("   -> Plugin not installed. Installing...")
+    print("Plugin state unclear, reinstalling plugin.")
     install_plugin_via_search(page)
     return True
 
-# --- MAIN WORKFLOW ---
-
-def run_migration_workflow(wp_url, admin_user, admin_pass):
-    # 1. Derive and Prepare Site Folder
-    wp_site_folder = get_safe_site_name(wp_url)
-    site_save_dir = os.path.join(BASE_EC2_DIR, wp_site_folder)
-    if not os.path.exists(site_save_dir):
-        os.makedirs(site_save_dir)
-        print(f"   -> Created site backup directory: {site_save_dir}")
-
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        context = browser.new_context(accept_downloads=True)
-        page = context.new_page()
-
+def login_with_retry(page, wp_url, admin_user, admin_pass, max_retries=3):
+    for attempt in range(max_retries):
         try:
-            # --- PHASE 1: LOGIN ---
-            print("--- PHASE 1: LOGIN ---")
-            page.goto(f"{wp_url}/wp-admin/", timeout=60000)
-            
-            # Check if WordPress needs installation
-            if "install.php" in page.url:
-                print("   -> WordPress installation required. Setting up WordPress...")
-                
-                # Fill WordPress installation form
-                page.fill("#weblog_title", "WordPress Migration Source")
-                page.fill("#user_name", admin_user)
-                page.fill("#pass1", admin_pass)
-                page.fill("#pass2", admin_pass)
-                page.fill("#admin_email", "admin@example.com")
-                
-                # Submit installation
-                page.click("#submit")
-                page.wait_for_selector("a:has-text('Log In')", timeout=60000)
-                print("   -> WordPress installation completed. Proceeding to login...")
-                
-                # Click login link
-                page.click("a:has-text('Log In')")
-                page.wait_for_selector("#user_login", timeout=30000)
-            
-            # Now perform regular login
+            print(f"Login attempt {attempt + 1}/{max_retries}...")
+            page.goto(f"{wp_url}/wp-login.php", timeout=30000)
             page.fill("#user_login", admin_user)
             page.fill("#user_pass", admin_pass)
             page.click("#wp-submit")
-            page.wait_for_selector("#wpadminbar", timeout=60000)
-            print("   -> Login successful.")
+            page.wait_for_selector("#wpadminbar", timeout=45000)
+            print("Login successful.")
+            return True
+        except Exception as e:
+            print(f"Login failed on attempt {attempt + 1}: {e}")
+            try:
+                page.context.clear_cookies()
+            except Exception:
+                pass
+            time.sleep(3 * attempt)
+    print("All login attempts failed.")
+    return False
 
-            # --- PHASE 2: CHECK & INSTALL PLUGIN ---
-            print("--- PHASE 2: CHECK & INSTALL PLUGIN ---")
+def click_element_with_retries(locator, max_retries=3, delay=3):
+    for attempt in range(max_retries):
+        try:
+            if locator.is_visible() and locator.is_enabled():
+                locator.click()
+                return True
+        except Exception as e:
+            print(f"Click attempt {attempt + 1} failed: {e}")
+        time.sleep(delay)
+    return False
+
+def download_file_directly(url, save_path):
+    print(f"Downloading backup directly from URL: {url}")
+    try:
+        with requests.get(url, stream=True) as r:
+            r.raise_for_status()
+            with open(save_path, 'wb') as f:
+                for chunk in r.iter_content(chunk_size=8192):
+                    if chunk:  # filter out keep-alive chunks
+                        f.write(chunk)
+        print(f"Backup downloaded successfully to: {save_path}")
+        return True
+    except Exception as e:
+        print(f"Failed to download the backup file directly: {e}")
+        return False
+
+def run_migration_workflow(wp_url, admin_user, admin_pass):
+    wp_site_folder = get_safe_site_name(wp_url)
+    site_save_dir = os.path.join(BASE_EC2_DIR, wp_site_folder)
+    os.makedirs(site_save_dir, exist_ok=True)
+    print(f"Save directory: {site_save_dir}")
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True, args=["--no-sandbox"])  # add no-sandbox if on cloud/EC2
+        context = browser.new_context(accept_downloads=True)
+        context.set_default_timeout(60000)  # Default 60s timeout for waits
+        page = context.new_page()
+
+        # Clear cookies/permissions before login for fresh start
+        page.context.clear_cookies()
+        page.context.clear_permissions()
+
+        if not login_with_retry(page, wp_url, admin_user, admin_pass):
+            print("Login failed, aborting workflow.")
+            return False
+
+        try:
+            print("Checking plugin status...")
             page.goto(f"{wp_url}/wp-admin/plugins.php")
             page.wait_for_load_state('networkidle', timeout=30000)
-            ensure_plugin_active(page)
 
-            # --- PHASE 3: TRIGGER EXPORT & DOWNLOAD ---
-            print("--- PHASE 3: TRIGGER EXPORT & LOCAL DOWNLOAD ON EC2 ---")
+            if not perform_with_retries(lambda: ensure_plugin_active(page), "Ensure plugin active"):
+                raise Exception("Plugin activation failed")
+
+            print("Triggering export page...")
             page.goto(f"{wp_url}/wp-admin/admin.php?page=ai1wm_export")
-            
-            # Wait until 'Export Site To' button is ready
-            export_button_locator = page.locator('div.ai1wm-button-main')
-            export_button_locator.wait_for(state="visible", timeout=60000)
+            export_btn = page.locator('div.ai1wm-button-main')
+            export_btn.wait_for(state="visible", timeout=120000)
 
-            for attempt in range(3):
-                try:
-                    print(f"   -> Clicking 'Export Site To' button (Attempt {attempt+1}/3)...")
-                    export_button_locator.click(force=True, timeout=10000)
-                    break
-                except Exception as e:
-                    if attempt == 2:
-                        raise Exception(f"Failed to click 'Export Site To' button after 3 attempts. Last error: {e}")
-                    time.sleep(5)
+            if not click_element_with_retries(export_btn, max_retries=5, delay=5):
+                raise Exception("Failed to click Export Site button")
 
-            print("   -> Clicking 'File' to initiate backup...")
-            page.locator("#ai1wm-export-file").click()
+            print("Clicking 'File' export option...")
+            file_btn = page.locator("#ai1wm-export-file")
+            if not click_element_with_retries(file_btn, max_retries=5, delay=5):
+                raise Exception("Failed to click File export button")
 
-            # Wait for download button to appear
-            print("   -> Waiting for backup to complete and download button to appear...")
-            with page.expect_download(timeout=300000) as download_info:
-                download_link_locator = page.locator('a.ai1wm-button-download')
-                download_link_locator.wait_for(state="visible", timeout=300000)
-                download_link_locator.click(force=True)
+            print("Waiting for download link to appear...")
+            dl_link = page.locator('a.ai1wm-button-download')
+            dl_link.wait_for(state="visible", timeout=600000)
 
-            download = download_info.value
-            final_filename = download.suggested_filename
-            final_save_path = os.path.join(site_save_dir, final_filename)
-            download.save_as(final_save_path)
-            print(f"   ✅ Backup file saved to EC2 at: {final_save_path}")
+            # Extract the download URL and download file directly with requests
+            download_url = dl_link.get_attribute("href")
+            if not download_url:
+                raise Exception("Failed to retrieve download URL from export page.")
 
-            page.get_by_role("button", name="CLOSE").click()
-            print("\n--- WORKFLOW COMPLETE ---")
-            print(f"File is located in site-specific folder: {site_save_dir}")
+            final_path = os.path.join(site_save_dir, os.path.basename(download_url))
+
+            if not download_file_directly(download_url, final_path):
+                raise Exception("Direct download of backup failed.")
+
+            # Safely click CLOSE button if present
+            try:
+                close_btn = page.get_by_role("button", name="CLOSE")
+                if close_btn.is_visible():
+                    close_btn.click()
+            except Exception as e:
+                print(f"Close button not found or clickable: {e}")
+
+            print("Workflow complete.")
             return True
 
         except Exception as e:
-            print(f"\n❌ FATAL WORKFLOW ERROR: {e}")
+            print(f"Workflow error: {e}")
+            try:
+                page.screenshot(path="error_screenshot.png")
+                print("Screenshot saved as error_screenshot.png")
+            except Exception:
+                pass
             return False
 
         finally:
@@ -172,4 +221,4 @@ if __name__ == '__main__':
     if run_migration_workflow(WP_URL, USERNAME, PASSWORD):
         print("MIGRATION TOOL: SUCCESS. Check backup files.")
     else:
-        print("MIGRATION TOOL: FAILURE. Review logs for error details.")
+        print("MIGRATION TOOL: FAILURE. Check logs for errors.")
