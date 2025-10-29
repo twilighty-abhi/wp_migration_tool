@@ -19,9 +19,11 @@ This tool automates WordPress migration with these key components:
 - **☸️ Kubernetes Native**: Built for K3s/Kubernetes environments
 - **📦 Plugin Management**: Automatic All-in-One WP Migration plugin installation
 - **📁 Upload Limit Handling**: Dynamic PHP upload limits for large backup files
-- **🎯 Interactive Setup**: Guided configuration with progress indicators
+- **🎯 Dual Mode Operation**: Interactive setup or non-interactive automation
+- **🔧 Command Line Interface**: Full CLI support for automation and scripting
 - **🔒 Secure Credentials**: Auto-generated passwords and secure storage
 - **📊 Resource Optimization**: Optimized for low-resource environments
+- **🚀 CI/CD Ready**: Perfect for automated deployment pipelines
 
 ## 📋 Prerequisites
 
@@ -49,9 +51,26 @@ playwright install chromium
 ```
 
 ### 2. Run Complete Migration
+
+#### Interactive Mode (Guided Setup)
 ```bash
-# Interactive migration workflow
+# Interactive migration workflow with prompts
 ./wp-migration-orchestrator.sh
+```
+
+#### Non-Interactive Mode (Automation Ready)
+```bash
+# Minimal - with auto-generated defaults
+./wp-migration-orchestrator.sh -u https://old-site.com -n admin -p password123
+
+# Complete - with custom parameters
+./wp-migration-orchestrator.sh \
+  -u https://old-site.com \
+  -n admin \
+  -p password123 \
+  -d new-site.test.kunj.company \
+  -s wp-client-prod \
+  -e admin@newsite.com
 ```
 
 ### 3. Test Environment
@@ -63,13 +82,13 @@ playwright install chromium
 ## 📖 Migration Workflow
 
 ### Phase 1: Source Site Backup
-- 🔐 Interactive credential collection for source WordPress site
+- 🔐 Credential collection (interactive prompts or CLI parameters)
 - 🔌 Automatic All-in-One WP Migration plugin installation/activation
 - 🤖 Headless browser automation for backup creation
 - 📁 Organized backup file storage in `/home/ubuntu/backup-receiver/`
 
 ### Phase 2: K3s Deployment
-- 🎯 Interactive domain and namespace configuration  
+- 🎯 Domain and namespace configuration (interactive or auto-generated)
 - 🗄️ MariaDB database with persistent storage
 - 🐘 WordPress deployment with resource optimization
 - 🌐 Traefik ingress configuration for HTTP access
@@ -96,7 +115,7 @@ playwright install chromium
 
 ```
 wp_migration_tool/
-├── 🎯 wp-migration-orchestrator.sh    # Main orchestration workflow
+├── 🎯 wp-migration-orchestrator.sh    # Main orchestrator (Interactive + CLI)
 ├── 🔄 migrate.py                      # Source site backup automation  
 ├── 📥 import.py                       # Target site import automation
 ├── ☸️ k3s-wp-spawner.sh               # K3s WordPress deployment
@@ -113,13 +132,63 @@ wp_migration_tool/
 ## 🔧 Usage Examples
 
 ### Complete Migration
+
+#### Interactive Mode
 ```bash
-# Full automated migration
+# Full guided migration with interactive prompts
 ./wp-migration-orchestrator.sh
-# Follow interactive prompts for:
+# Follow prompts for:
 # - Source site URL and credentials
-# - Target domain and namespace
+# - Target domain and namespace (with smart defaults)
 # - Admin email configuration
+```
+
+#### Non-Interactive Mode
+```bash
+# Show help and available options
+./wp-migration-orchestrator.sh --help
+
+# Minimal migration with auto-generated defaults
+./wp-migration-orchestrator.sh \
+  --url https://source-site.com \
+  --username admin \
+  --password mypassword
+
+# Full migration with custom parameters
+./wp-migration-orchestrator.sh \
+  --url https://source-site.com \
+  --username admin \
+  --password mypassword \
+  --domain new-site.test.kunj.company \
+  --namespace wp-production \
+  --email admin@company.com
+
+# Short form arguments
+./wp-migration-orchestrator.sh \
+  -u https://source-site.com \
+  -n admin \
+  -p mypassword \
+  -d new-site.test.kunj.company \
+  -s wp-prod \
+  -e admin@company.com
+```
+
+#### Automation & Scripting
+```bash
+# Use in CI/CD pipelines
+#!/bin/bash
+SOURCE_URL="https://staging.mysite.com"
+ADMIN_USER="admin"
+ADMIN_PASS="${WP_ADMIN_PASSWORD}"  # From environment variable
+TARGET_DOMAIN="production.mysite.com"
+
+./wp-migration-orchestrator.sh \
+  -u "$SOURCE_URL" \
+  -n "$ADMIN_USER" \
+  -p "$ADMIN_PASS" \
+  -d "$TARGET_DOMAIN" \
+  -s wp-production \
+  -e ops@company.com
 ```
 
 ### Individual Components
@@ -137,7 +206,35 @@ python3 import.py
 ./setup-wordpress-admin.sh
 ```
 
-## 🐛 Troubleshooting
+## � Command Line Reference
+
+### wp-migration-orchestrator.sh Options
+
+```bash
+Usage: ./wp-migration-orchestrator.sh [OPTIONS]
+
+OPTIONS:
+  -u, --url <URL>           Source WordPress URL (required for non-interactive mode)
+  -n, --username <USER>     Source WordPress admin username (required for non-interactive mode)
+  -p, --password <PASS>     Source WordPress admin password (required for non-interactive mode)
+  -d, --domain <DOMAIN>     New domain for migrated site (optional, defaults to auto-generated)
+  -s, --namespace <NS>      Kubernetes namespace (optional, defaults to auto-generated)
+  -e, --email <EMAIL>       Admin email (optional, defaults to admin@example.com)
+  -h, --help               Show help message
+```
+
+### Default Values
+When using non-interactive mode, optional parameters use these defaults:
+- **Domain**: `wp-migrated-[timestamp].test.kunj.company`
+- **Namespace**: `wp-migration-[6-digit-timestamp]`
+- **Email**: `admin@example.com`
+
+### Mode Detection
+- **Interactive Mode**: Triggered when no parameters are provided
+- **Non-Interactive Mode**: Triggered when `-u`, `-n`, and `-p` are all provided
+- **Mixed Mode**: Not supported - either provide all required params or none
+
+## �🐛 Troubleshooting
 
 ### Python/Playwright Issues
 ```bash
@@ -195,12 +292,41 @@ For issues and questions:
 - Check existing documentation in the `*.md` files
 - Review troubleshooting section above
 
+## 🚀 Quick Examples
+
+### For Manual Migrations
+```bash
+# Interactive setup - best for first-time users
+./wp-migration-orchestrator.sh
+```
+
+### For Automation
+```bash
+# Basic automation - auto-generated target
+./wp-migration-orchestrator.sh -u https://source.com -n admin -p pass123
+
+# Production deployment - custom target
+./wp-migration-orchestrator.sh \
+  -u https://staging.mysite.com \
+  -n admin \
+  -p $WP_PASSWORD \
+  -d production.mysite.com \
+  -s wp-prod \
+  -e ops@mysite.com
+```
+
+### For Testing
+```bash
+# Quick test migration with defaults
+./wp-migration-orchestrator.sh \
+  -u https://demo.wordpress.com \
+  -n demo \
+  -p demo123
+```
+
 ---
 **Last Updated**: October 2025  
-**Version**: 2.0.0  
+**Version**: 2.1.0 - Added CLI Support  
 **Tested On**: Ubuntu 22.04, K3s v1.33.5+k3s1
-kubectl cluster-info
-kubectl get nodes
-```
 
 
