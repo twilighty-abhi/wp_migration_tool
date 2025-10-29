@@ -20,6 +20,20 @@ DEPLOY_SCRIPT="./k3s-wp-spawner.sh"
 IMPORT_SCRIPT="import.py"
 TEMP_DIR="/tmp/wp_migration_$$"
 
+# Default values for optional parameters
+DEFAULT_NEW_DOMAIN="wp-migrated-$(date +%s).test.kunj.company"
+DEFAULT_CLIENT_NAMESPACE="wp-migration-$(date +%s | tail -c 6)"
+DEFAULT_ADMIN_EMAIL="admin@example.com"
+
+# Global variables for parameters
+SOURCE_WP_URL=""
+SOURCE_USERNAME=""
+SOURCE_PASSWORD=""
+NEW_DOMAIN=""
+CLIENT_NAMESPACE=""
+ADMIN_EMAIL=""
+INTERACTIVE_MODE=true
+
 # --- UTILITY FUNCTIONS ---
 
 print_header() {
@@ -44,22 +58,128 @@ print_info() {
     echo -e "${BLUE}ℹ️  $1${NC}"
 }
 
-# Function to get required input
+# Function to show usage
+show_usage() {
+    echo "Usage: $0 [OPTIONS]"
+    echo
+    echo "OPTIONS:"
+    echo "  -u, --url <URL>           Source WordPress URL (required for non-interactive mode)"
+    echo "  -n, --username <USER>     Source WordPress admin username (required for non-interactive mode)"
+    echo "  -p, --password <PASS>     Source WordPress admin password (required for non-interactive mode)"
+    echo "  -d, --domain <DOMAIN>     New domain for migrated site (optional, defaults to auto-generated)"
+    echo "  -s, --namespace <NS>      Kubernetes namespace (optional, defaults to auto-generated)"
+    echo "  -e, --email <EMAIL>       Admin email (optional, defaults to admin@example.com)"
+    echo "  -h, --help               Show this help message"
+    echo
+    echo "EXAMPLES:"
+    echo "  Interactive mode:"
+    echo "    $0"
+    echo
+    echo "  Non-interactive mode with required parameters:"
+    echo "    $0 -u https://old-site.com -n admin -p password123"
+    echo
+    echo "  Non-interactive mode with all parameters:"
+    echo "    $0 -u https://old-site.com -n admin -p password123 -d new-site.com -s wp-client -e admin@newsite.com"
+    echo
+}
+
+# Function to parse command line arguments
+parse_arguments() {
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -u|--url)
+                SOURCE_WP_URL="$2"
+                shift 2
+                ;;
+            -n|--username)
+                SOURCE_USERNAME="$2"
+                shift 2
+                ;;
+            -p|--password)
+                SOURCE_PASSWORD="$2"
+                shift 2
+                ;;
+            -d|--domain)
+                NEW_DOMAIN="$2"
+                shift 2
+                ;;
+            -s|--namespace)
+                CLIENT_NAMESPACE="$2"
+                shift 2
+                ;;
+            -e|--email)
+                ADMIN_EMAIL="$2"
+                shift 2
+                ;;
+            -h|--help)
+                show_usage
+                exit 0
+                ;;
+            *)
+                print_error "Unknown option: $1"
+                show_usage
+                exit 1
+                ;;
+        esac
+    done
+    
+    # Check if we have the minimum required parameters for non-interactive mode
+    if [[ -n "$SOURCE_WP_URL" || -n "$SOURCE_USERNAME" || -n "$SOURCE_PASSWORD" ]]; then
+        # If any parameter is provided, all required ones must be provided
+        if [[ -z "$SOURCE_WP_URL" || -z "$SOURCE_USERNAME" || -z "$SOURCE_PASSWORD" ]]; then
+            print_error "When using non-interactive mode, you must provide all required parameters:"
+            print_error "  --url, --username, and --password are all required"
+            show_usage
+            exit 1
+        fi
+        INTERACTIVE_MODE=false
+        
+        # Set defaults for optional parameters if not provided
+        [[ -z "$NEW_DOMAIN" ]] && NEW_DOMAIN="$DEFAULT_NEW_DOMAIN"
+        [[ -z "$CLIENT_NAMESPACE" ]] && CLIENT_NAMESPACE="$DEFAULT_CLIENT_NAMESPACE"
+        [[ -z "$ADMIN_EMAIL" ]] && ADMIN_EMAIL="$DEFAULT_ADMIN_EMAIL"
+        
+        print_info "Running in non-interactive mode with provided parameters"
+    else
+        print_info "Running in interactive mode"
+    fi
+}
+
+# Function to get required input (modified for interactive mode)
 get_input() {
     local prompt_text="$1"
     local var_name="$2"
     local is_password="$3"
+    local default_value="$4"
     local input
     
+    # If we already have a value from command line arguments, use it
+    local current_value
+    eval "current_value=\$$var_name"
+    if [[ -n "$current_value" ]]; then
+        return 0
+    fi
+    
     while true; do
-        if [ "$is_password" = "true" ]; then
-            read -s -p "$prompt_text" input
-            echo
+        if [[ -n "$default_value" ]]; then
+            if [ "$is_password" = "true" ]; then
+                read -s -p "$prompt_text [$default_value]: " input
+                echo
+            else
+                read -p "$prompt_text [$default_value]: " input
+            fi
+            # Use default if input is empty
+            [[ -z "$input" ]] && input="$default_value"
         else
-            read -p "$prompt_text" input
+            if [ "$is_password" = "true" ]; then
+                read -s -p "$prompt_text" input
+                echo
+            else
+                read -p "$prompt_text" input
+            fi
         fi
         
-        if [ -z "$input" ]; then
+        if [ -z "$input" ] && [ -z "$default_value" ]; then
             print_error "Input cannot be empty. Please try again."
         else
             eval "$var_name=\"$input\""
@@ -226,6 +346,9 @@ trap cleanup EXIT
 main() {
     print_header "WordPress Migration Orchestrator"
     
+    # Parse command line arguments
+    parse_arguments "$@"
+    
     # Create temporary directory
     mkdir -p "$TEMP_DIR"
     
@@ -241,16 +364,26 @@ main() {
     # --- COLLECT ALL INFORMATION FIRST ---
     print_header "MIGRATION CONFIGURATION"
     
-    print_info "Source Site Information:"
-    get_input "Enter source WordPress URL (e.g., https://old-site.com): " SOURCE_WP_URL
-    get_input "Enter source WordPress admin username: " SOURCE_USERNAME
-    get_input "Enter source WordPress admin password: " SOURCE_PASSWORD true
-    
-    echo
-    print_info "Target Site Information:"
-    get_input "Enter new domain for migrated site (e.g., wp2.test.kunj.company): " NEW_DOMAIN
-    get_input "Enter Kubernetes namespace for new site: " CLIENT_NAMESPACE
-    get_input "Enter WordPress admin email: " ADMIN_EMAIL
+    if [[ "$INTERACTIVE_MODE" == true ]]; then
+        print_info "Source Site Information:"
+        get_input "Enter source WordPress URL (e.g., https://old-site.com): " SOURCE_WP_URL
+        get_input "Enter source WordPress admin username: " SOURCE_USERNAME
+        get_input "Enter source WordPress admin password: " SOURCE_PASSWORD true
+        
+        echo
+        print_info "Target Site Information (optional - defaults will be used if empty):"
+        get_input "Enter new domain for migrated site: " NEW_DOMAIN "" false "$DEFAULT_NEW_DOMAIN"
+        get_input "Enter Kubernetes namespace for new site: " CLIENT_NAMESPACE "" false "$DEFAULT_CLIENT_NAMESPACE"
+        get_input "Enter WordPress admin email: " ADMIN_EMAIL "" false "$DEFAULT_ADMIN_EMAIL"
+    else
+        print_info "Using provided parameters:"
+        print_info "Source URL: $SOURCE_WP_URL"
+        print_info "Source Username: $SOURCE_USERNAME"
+        print_info "Source Password: [hidden]"
+        print_info "New Domain: $NEW_DOMAIN"
+        print_info "Namespace: $CLIENT_NAMESPACE"
+        print_info "Admin Email: $ADMIN_EMAIL"
+    fi
     
     # Construct target URL from domain (assuming HTTP)
     TARGET_WP_URL="http://$NEW_DOMAIN"
